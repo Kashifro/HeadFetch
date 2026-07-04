@@ -1,12 +1,123 @@
-cmake_minimum_required(VERSION 3.10)
-project(headfetch LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.22)
 
-set(CMAKE_CXX_STANDARD 23)
+project(headfetch_llroid LANGUAGES CXX)
+
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+set(MOD_ID "headfetch" CACHE STRING "LeviLauncher mod package directory name")
+set(MOD_NAME "HeadFetch" CACHE STRING "LeviLauncher mod display name")
+set(MOD_AUTHOR "Kashifro" CACHE STRING "LeviLauncher mod author")
+set(MOD_VERSION "0.1.0" CACHE STRING "LeviLauncher mod version")
+set(MOD_LIBRARY_NAME "headfetch" CACHE STRING "Native library name without lib prefix or .so suffix")
+set(MOD_MINECRAFT_VERSIONS "[\"1.21.*\"]" CACHE STRING "Raw JSON array for manifest minecraft_versions")
+set(MOD_ICON "" CACHE STRING "Optional package-relative icon path, such as icon.png")
 
 include(FetchContent)
+set(LEVI_PRELOADER_ROOT "" CACHE PATH "Optional path to a local preloader-android checkout")
+if(LEVI_PRELOADER_ROOT STREQUAL "" AND DEFINED ENV{LEVI_PRELOADER_ROOT} AND NOT "$ENV{LEVI_PRELOADER_ROOT}" STREQUAL "")
+    set(LEVI_PRELOADER_ROOT "$ENV{LEVI_PRELOADER_ROOT}")
+endif()
+
+if(LEVI_PRELOADER_ROOT STREQUAL "")
+    FetchContent_Declare(
+        preloader_android
+        GIT_REPOSITORY https://github.com/LiteLDev/preloader-android.git
+        GIT_TAG main
+    )
+    FetchContent_GetProperties(preloader_android)
+    if(NOT preloader_android_POPULATED)
+        FetchContent_Populate(preloader_android)
+    endif()
+    set(LEVI_PRELOADER_ROOT "${preloader_android_SOURCE_DIR}")
+endif()
+
+if(NOT EXISTS "${LEVI_PRELOADER_ROOT}/src/pl/cpp/Mod.hpp")
+    message(FATAL_ERROR "LEVI_PRELOADER_ROOT must point to a preloader-android checkout: ${LEVI_PRELOADER_ROOT}")
+endif()
+
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_Declare(
+    boost_pfr
+    GIT_REPOSITORY https://github.com/boostorg/pfr.git
+    GIT_TAG boost-1.88.0
+)
+FetchContent_Declare(
+    magic_enum
+    GIT_REPOSITORY https://github.com/Neargye/magic_enum.git
+    GIT_TAG v0.9.7
+)
+FetchContent_MakeAvailable(nlohmann_json boost_pfr magic_enum)
+
+if(NOT ANDROID)
+    set(LEVI_GENERATED_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-config")
+
+    add_executable(levi_config_generator
+        src/config_generator.cpp
+        src/mod/Config.cpp
+    )
+
+    target_include_directories(levi_config_generator
+        PRIVATE
+            src
+            "${LEVI_PRELOADER_ROOT}/src"
+    )
+
+    target_compile_definitions(levi_config_generator PRIVATE PL_CONFIG_NO_RUNTIME)
+    target_link_libraries(levi_config_generator PRIVATE
+        nlohmann_json::nlohmann_json
+        Boost::pfr
+        magic_enum::magic_enum
+    )
+
+    add_custom_target(levi_generate_config
+        COMMAND levi_config_generator "${LEVI_GENERATED_CONFIG_DIR}"
+        DEPENDS levi_config_generator
+        COMMENT "Generating config.json and config.schema.json"
+        VERBATIM
+    )
+
+    return()
+endif()
+
+if(NOT DEFINED LEVI_PACKAGE_CONFIG_DIR)
+    set(LEVI_PACKAGE_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config" CACHE PATH
+        "Directory containing config.json and config.schema.json to package")
+endif()
+
+get_filename_component(LEVI_PACKAGE_CONFIG_DIR "${LEVI_PACKAGE_CONFIG_DIR}" ABSOLUTE)
+set(LEVI_PACKAGE_CONFIG_JSON "${LEVI_PACKAGE_CONFIG_DIR}/config.json")
+set(LEVI_PACKAGE_CONFIG_SCHEMA "${LEVI_PACKAGE_CONFIG_DIR}/config.schema.json")
+
+if(NOT IS_DIRECTORY "${LEVI_PACKAGE_CONFIG_DIR}")
+    message(FATAL_ERROR "LEVI_PACKAGE_CONFIG_DIR must be a directory: ${LEVI_PACKAGE_CONFIG_DIR}")
+endif()
+
+if(NOT EXISTS "${LEVI_PACKAGE_CONFIG_JSON}")
+    message(FATAL_ERROR "LEVI_PACKAGE_CONFIG_DIR must contain config.json: ${LEVI_PACKAGE_CONFIG_JSON}")
+endif()
+
+if(NOT EXISTS "${LEVI_PACKAGE_CONFIG_SCHEMA}")
+    message(FATAL_ERROR "LEVI_PACKAGE_CONFIG_DIR must contain config.schema.json: ${LEVI_PACKAGE_CONFIG_SCHEMA}")
+endif()
+
+if(NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a" AND
+   NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
+    message(FATAL_ERROR "Unsupported Android ABI: ${CMAKE_ANDROID_ARCH_ABI}")
+endif()
+
+# --- Third-party dependencies specific to HeadFetch's rendering/scanning needs ---
+
 FetchContent_Declare(libhat
     GIT_REPOSITORY https://github.com/BasedInc/libhat.git
     EXCLUDE_FROM_ALL
@@ -30,17 +141,109 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_ES2)
 target_compile_options(imgui PRIVATE -Os -ffunction-sections -fdata-sections -fvisibility=hidden)
 target_link_libraries(imgui PUBLIC GLESv2)
 
-add_library(headfetch SHARED
+add_library(${MOD_LIBRARY_NAME} SHARED
     src/main.cpp
+    src/mod/Config.cpp
+    src/mod/HeadFetchMod.cpp
+    src/hooks/HookManager.cpp
 )
-target_include_directories(headfetch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_options(headfetch PRIVATE -Os -ffunction-sections -fdata-sections)
-target_link_libraries(headfetch PUBLIC libhat::libhat imgui GLESv2 android EGL log)
-target_link_options(headfetch PRIVATE
-    -static-libstdc++
-    -Wl,--gc-sections
-    -Wl,--exclude-libs,ALL
-    -Wl,-s
+
+set_target_properties(${MOD_LIBRARY_NAME} PROPERTIES
+    OUTPUT_NAME "${MOD_LIBRARY_NAME}"
 )
-set_target_properties(headfetch PROPERTIES OUTPUT_NAME headfetch)
-install(TARGETS headfetch LIBRARY DESTINATION mods)
+
+target_include_directories(${MOD_LIBRARY_NAME}
+    PRIVATE
+        src
+        "${LEVI_PRELOADER_ROOT}/src"
+)
+
+target_compile_options(${MOD_LIBRARY_NAME}
+    PRIVATE
+        -Os -ffunction-sections -fdata-sections
+        $<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:-fvisibility=hidden -fvisibility-inlines-hidden>
+)
+
+target_link_options(${MOD_LIBRARY_NAME}
+    PRIVATE
+        -static-libstdc++
+        -Wl,--gc-sections
+        -Wl,--exclude-libs,ALL
+        "-Wl,-z,max-page-size=16384"
+)
+
+find_library(log-lib log REQUIRED)
+find_library(android-lib android REQUIRED)
+find_library(egl-lib EGL REQUIRED)
+find_library(gles-lib GLESv2 REQUIRED)
+target_link_libraries(${MOD_LIBRARY_NAME} PRIVATE
+    ${log-lib}
+    ${android-lib}
+    ${egl-lib}
+    ${gles-lib}
+    libhat::libhat
+    imgui
+    nlohmann_json::nlohmann_json
+    Boost::pfr
+    magic_enum::magic_enum
+)
+
+if(NOT CMAKE_STRIP)
+    message(FATAL_ERROR "CMAKE_STRIP is required to strip the generated library.")
+endif()
+
+add_custom_command(TARGET ${MOD_LIBRARY_NAME} POST_BUILD
+    COMMAND "${CMAKE_STRIP}" --strip-unneeded "$<TARGET_FILE:${MOD_LIBRARY_NAME}>"
+    COMMENT "Stripping symbols from $<TARGET_FILE_NAME:${MOD_LIBRARY_NAME}>"
+    VERBATIM
+)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/manifest.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/manifest.json"
+    @ONLY
+)
+
+set(LEVI_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/package")
+set(LEVI_PACKAGE_MOD_DIR "${LEVI_PACKAGE_ROOT}/${MOD_ID}")
+set(LEVI_PACKAGE_FILE "${CMAKE_CURRENT_BINARY_DIR}/${MOD_ID}-${MOD_VERSION}-${CMAKE_ANDROID_ARCH_ABI}.levipack")
+set(LEVI_PACKAGE_ICON_COMMAND)
+set(LEVI_PACKAGE_CONFIG_COMMAND
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${LEVI_PACKAGE_CONFIG_DIR}" "${LEVI_PACKAGE_MOD_DIR}/config")
+
+if(NOT MOD_ICON STREQUAL "")
+    if(IS_ABSOLUTE "${MOD_ICON}")
+        message(FATAL_ERROR "MOD_ICON must be a package-relative path")
+    endif()
+
+    if(MOD_ICON MATCHES "(^|/)\\.\\.(/|$)")
+        message(FATAL_ERROR "MOD_ICON must not contain ..")
+    endif()
+
+    set(MOD_ICON_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${MOD_ICON}")
+    if(NOT EXISTS "${MOD_ICON_SOURCE}")
+        message(FATAL_ERROR "MOD_ICON does not exist: ${MOD_ICON_SOURCE}")
+    endif()
+
+    get_filename_component(MOD_ICON_DIR "${MOD_ICON}" DIRECTORY)
+    if(NOT MOD_ICON_DIR STREQUAL "")
+        list(APPEND LEVI_PACKAGE_ICON_COMMAND
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${LEVI_PACKAGE_MOD_DIR}/${MOD_ICON_DIR}")
+    endif()
+    list(APPEND LEVI_PACKAGE_ICON_COMMAND
+        COMMAND "${CMAKE_COMMAND}" -E copy "${MOD_ICON_SOURCE}" "${LEVI_PACKAGE_MOD_DIR}/${MOD_ICON}")
+endif()
+
+add_custom_target(levi_package
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${LEVI_PACKAGE_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${LEVI_PACKAGE_MOD_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${MOD_LIBRARY_NAME}>" "${LEVI_PACKAGE_MOD_DIR}/lib${MOD_LIBRARY_NAME}.so"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" "${LEVI_PACKAGE_MOD_DIR}/manifest.json"
+    ${LEVI_PACKAGE_ICON_COMMAND}
+    ${LEVI_PACKAGE_CONFIG_COMMAND}
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${LEVI_PACKAGE_ROOT}" "${CMAKE_COMMAND}" -E tar "cf" "${LEVI_PACKAGE_FILE}" --format=zip "${MOD_ID}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    DEPENDS ${MOD_LIBRARY_NAME}
+    COMMENT "Packaging ${MOD_ID} for LeviLauncher"
+    VERBATIM
+)

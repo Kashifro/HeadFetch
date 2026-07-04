@@ -56,8 +56,8 @@ inline GLuint find(const std::string& uuid){
 	return it->second.glTex;
 }
 
-inline void evictStale(){
-	if(Cache.size() <= MAX_CACHE_SIZE){ return; }
+inline void evictStale(std::size_t maxSize = MAX_CACHE_SIZE){
+	if(Cache.size() <= maxSize){ return; }
 	std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> ages;
 	for(const auto& [uuid, e] : Cache){
 		ages.emplace_back(uuid, e.lastUsed);
@@ -65,7 +65,7 @@ inline void evictStale(){
 	std::sort(ages.begin(), ages.end(), [](const auto& a, const auto& b){
 		return a.second < b.second;
 	});
-	std::size_t toRemove = Cache.size() - MAX_CACHE_SIZE;
+	std::size_t toRemove = Cache.size() - maxSize;
 	for(std::size_t i = 0; i < toRemove && i < ages.size(); ++i){
 		auto it = Cache.find(ages[i].first);
 		if(it != Cache.end()){
