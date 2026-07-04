@@ -19,6 +19,7 @@ inline bool   Initialized   = false;
 inline ImFont* Font         = nullptr;
 inline double LastFrameTime = 0.0;
 inline int    EvictCounter  = 0;
+inline float  PanelScale    = 1.0f;
 
 inline std::string stripMCCodes(const std::string& text){
 	std::string out;
@@ -92,9 +93,34 @@ inline void endFrame(){
 	glViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 
+// Android has no reliable "hold Tab" gesture, so a persistent tap-to-toggle
+// button replaces it. Always drawn while the HUD is on screen (regardless of
+// whether the panel is open), and its screen-space rect is published to
+// State::ToggleRect so the touch callback registered in
+// hooks/HookManager.cpp can hit-test raw MotionEvent coordinates against it.
+inline void drawToggleButton(float sw, float sh, float scale){
+	const float size = 34.0f * scale;
+	const float margin = 10.0f * scale;
+	ImVec2 pos(sw - size - margin, margin);
+	{
+		std::lock_guard<std::mutex> lock(State::ToggleRectMutex);
+		State::ToggleRect = { pos.x, pos.y, pos.x + size, pos.y + size, true };
+	}
+	bool open = State::panelVisible();
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImU32 bg = open ? IM_COL32(70, 140, 255, 200) : IM_COL32(20, 20, 24, 160);
+	dl->AddRectFilled(pos, ImVec2(pos.x + size, pos.y + size), bg, 6.0f * scale);
+	if(Font){ ImGui::PushFont(Font); }
+	const char* label = "P";
+	ImVec2 textSize = ImGui::CalcTextSize(label);
+	ImVec2 textPos(pos.x + (size - textSize.x) * 0.5f, pos.y + (size - textSize.y) * 0.5f);
+	drawShadowText(dl, textPos, label, IM_COL32(255, 255, 255, 255));
+	if(Font){ ImGui::PopFont(); }
+}
+
 inline void drawList(const std::vector<PlayerInfo>& players, float sw, float sh){
 	if(players.empty()){ return; }
-	float scale = sh / 1080.0f;
+	float scale = (sh / 1080.0f) * PanelScale;
 	if(scale < 0.5f){ scale = 0.5f; }
 	if(scale > 1.5f){ scale = 1.5f; }
 	const float HeadSize  = 20.0f * scale;

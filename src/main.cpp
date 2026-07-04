@@ -1,11 +1,5 @@
-#include "ui/TabList.h"
+#include "mod/HeadFetchMod.h"
 
-extern "C" [[gnu::visibility("default")]]
-void mod_preinit(){
-	hf::PlayerBoard::instance().preinit();
-}
+#include "pl/cpp/mod/RegisterHelper.hpp"
 
-extern "C" [[gnu::visibility("default")]]
-void mod_init(){
-	hf::PlayerBoard::instance().init();
-}
+PL_REGISTER_MOD(headfetch::HeadFetchMod, headfetch::HeadFetchMod::getInstance());
