@@ -45,8 +45,13 @@ generate_config() {
 	local preloader_args=()
 	[[ -n "${PRELOADER_ROOT}" ]] && preloader_args+=("-DLEVI_PRELOADER_ROOT=${PRELOADER_ROOT}")
 
-	cmake -S "${repo_root}" -B "${config_build_dir}" -G "${GENERATOR}" "${preloader_args[@]}"
-	cmake --build "${config_build_dir}" --target levi_generate_config
+	# Redirect to stderr: this function's stdout is captured via $(...) by
+	# the caller, and only the final path below should end up in that
+	# capture -- otherwise cmake's own status output gets appended to the
+	# path string (this broke CI: LEVI_PACKAGE_CONFIG_DIR ended up
+	# containing embedded newlines and compiler-detection log lines).
+	cmake -S "${repo_root}" -B "${config_build_dir}" -G "${GENERATOR}" "${preloader_args[@]}" >&2
+	cmake --build "${config_build_dir}" --target levi_generate_config >&2
 	echo "${config_build_dir}/generated-config"
 }
 

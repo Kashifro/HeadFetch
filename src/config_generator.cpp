@@ -1,4 +1,4 @@
-#include "mod/HeadFetchMod.h"
+#include "mod/Config.h"
 
 #include <filesystem>
 #include <fstream>
